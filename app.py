@@ -14,7 +14,10 @@ app = Flask(__name__)
 app.register_blueprint(router_users, url_prefix="/api")
 
 app.config["SECRET_KEY"] = "s3cr3t"
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///db.sqlite"
+app.config["SQLALCHEMY_DATABASE_URI"] = (
+    "mysql+pymysql://root:admin123@127.0.0.1:3306/flask-crud"
+)
+# app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///db.sqlite"
 
 login_manager = LoginManager()
 db.init_app(app)
@@ -24,7 +27,8 @@ login_manager.login_view = "login"
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    # return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 
 @app.route("/users/login", methods=["POST"])
@@ -66,7 +70,7 @@ def create_user():
     password = data.get("password")
 
     if username and email and password:
-        user = User(username=username, email=email, password=password)
+        user = User(username=username, email=email, password=password, role="admin")
         db.session.add(user)
         db.session.commit()
         return jsonify({"message": "User added successfully"}), 201
@@ -74,15 +78,21 @@ def create_user():
     return jsonify({"message": "username, email and password are required"}), 400
 
 
-@app.route("/users/", methods=["GET"])
+@app.route("/users/all", methods=["GET"])
 @login_required
-def get_users(): ...
+def get_users():
+    print("")
+    if current_user.role == "admin":
+        users = User.query.all()
+        return jsonify([user.to_dict() for user in users]), 200
+    else:
+        return jsonify({"message": "Unauthorized"}), 403
 
 
 @app.route("/users/one/<int:id_user>", methods=["GET"])
 @login_required
 def get_user(id_user):
-    user = User.query.get(id_user)
+    user = db.session.get(User, id_user)
     print(user)
 
     if user:
@@ -94,12 +104,19 @@ def get_user(id_user):
 @app.route("/users/upd/<int:id_user>", methods=["PUT"])
 @login_required
 def update_user(id_user):
-    user = User.query.get(id_user)
+    data = request.json
+    # user = User.query.get(id_user)
+    user = db.session.get(User, id_user)
+
+    if id_user != current_user.id and current_user.role == "user":
+        print("entrou aqui", current_user)
+        return jsonify({"message": "Unauthorized"}), 403
+
     if user:
-        data = request.json
-        user.username = data.get("username")
+        # user.username = data.get("username") pode ocorrer um problema pois está logado, com o username
         user.email = data.get("email")
         user.password = data.get("password")
+        user.role = data.get("role")
         db.session.commit()
         return jsonify(user.to_dict()), 200
     else:
@@ -110,7 +127,11 @@ def update_user(id_user):
 @login_required
 def delete_user(id_user):
     user = User.query.get(id_user)
-    if user:
+
+    if current_user.role != "admin":
+        return jsonify({"message": "Unauthorized"}), 403
+
+    if user and user.id != current_user.id:
         db.session.delete(user)
         db.session.commit()
         return jsonify({"message": "User deleted successfully"}), 200
